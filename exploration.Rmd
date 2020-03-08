@@ -1,0 +1,100 @@
+---
+title: "Exploration"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+#library(corrplot)
+```
+
+# Data
+
+Start by reading in the data and for simplicity recode the labels so it will be easier to work with. R models like factors and names are easier to read :) Do a quick count of the two labels to see how balanced the data set it. Also good to make some plots and other summaries to check the data here. 
+
+Possibly give a small intro to dplyr?
+
+```{r}
+
+# Get the data which I have downloaded from 
+#https://www.kaggle.com/mlg-ulb/creditcardfraud
+creditcard_data <- read_csv('creditcard.csv') %>% 
+  mutate(Class = recode(Class, `0` = 'Non-fraud', `1` = 'Fraud'))
+
+creditcard_data %>% 
+  group_by(Class) %>% 
+  count()
+
+
+```
+
+# Use tidymodels framework to create a model (ignore the inbalance for now)
+
+- Split into test and train
+- Create a recipe for preprocessing
+- Apply the recipe to the train data
+- Specify th model
+- Workflow = Recipe + Model -> Ready to fit train data
+- Bake the test data and do the predictions
+
+This model has a pretty good accuracy! But, now we have to think about the data imbalance
+
+```{r}
+
+data_split <- initial_split(creditcard_data, strata = "Class", p = 0.75)
+train_data <- training(data_split) 
+test_data  <- testing(data_split)
+
+
+fraud_rec <- recipe(Class ~ ., data = train_data) %>%
+  step_normalize(-Time, -Class) %>% 
+  prep(verbose = TRUE) 
+
+train <- juice(fraud_rec) 
+
+fraud_mod <- logistic_reg() %>% 
+  set_engine('glm')
+
+fraud_wfl <- workflow() %>% 
+  add_recipe(fraud_rec) %>% 
+  add_model(fraud_mod)
+
+fraud_fit <- fit(fraud_wfl, train)
+
+fraud_fit
+
+test  <- bake(fraud_rec, test_data)
+perf_metrics <- metric_set(accuracy, precision, recall)
+
+test_results <- bind_cols(
+  test,
+  predict(fraud_fit, test, type = 'prob'),
+  predict(fraud_fit, test)
+) %>% 
+  dplyr::select(Class, .pred_class, .pred_Fraud)
+
+test_results %>% 
+  perf_metrics(truth = Class, estimate = .pred_class)
+
+test_results %>% 
+  conf_mat(truth = Class, estimate = .pred_class)
+
+pr_curve(test_results, Class, .pred_Fraud) %>% 
+  ggplot(aes(x = recall, y = precision)) +
+  geom_path()
+
+# How many fraud cases did we miss? (Fraud, FALSE) = 49
+# How many fraud cases did we catch? (Fraud, TRUE) = 82
+# 62 % recall = 82/131 - this is most important for this case!
+# 87 % precision = 82/94
+# How many false alarms? (non-fraud, FALSE) = 12
+  
+```
+
+# Next steps:
+
+- Try improving the model, using other engines, changing the threshold for prediction and balancing the data
+- Do we understand this model??
+- Model selection
